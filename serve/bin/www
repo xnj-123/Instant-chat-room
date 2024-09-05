@@ -1,0 +1,155 @@
+#!/usr/bin/env node
+
+/**
+ * Module dependencies.
+ */
+
+const db =require( '../db');
+
+var app = require('../app');
+var debug = require('debug')('serve:server');
+var http = require('http');
+
+/**
+ * Get port from environment and store in Express.
+ */
+
+var port = normalizePort(process.env.PORT || '3000');
+app.set('port', port);
+
+/**
+ * Create HTTP server.
+ */
+
+var server = http.createServer(app);
+
+/**
+ * Listen on provided port, on all network interfaces.
+ */
+
+server.listen(port);
+server.on('error', onError);
+server.on('listening', onListening);
+
+/**
+ * Normalize a port into a number, string, or false.
+ */
+
+function normalizePort(val) {
+  var port = parseInt(val, 10);
+
+  if (isNaN(port)) {
+    // named pipe
+    return val;
+  }
+
+  if (port >= 0) {
+    // port number
+    return port;
+  }
+
+  return false;
+}
+
+/**
+ * Event listener for HTTP server "error" event.
+ */
+
+function onError(error) {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+
+  var bind = typeof port === 'string'
+    ? 'Pipe ' + port
+    : 'Port ' + port;
+
+  // handle specific listen errors with friendly messages
+  switch (error.code) {
+    case 'EACCES':
+      console.error(bind + ' requires elevated privileges');
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      console.error(bind + ' is already in use');
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
+
+/**
+ * Event listener for HTTP server "listening" event.
+ */
+
+function onListening() {
+  var addr = server.address();
+  var bind = typeof addr === 'string'
+    ? 'pipe ' + addr
+    : 'port ' + addr.port;
+  debug('Listening on ' + bind);
+}
+
+const io = require('socket.io')(server,{
+  cors: {
+      origin: '*'
+  }
+});
+
+let user = [];
+
+io.on('connection',socket=>{
+  
+  socket.on('enter',data =>{
+    const newUsername = data.username;
+  
+    const existingUser = user.find(item => item.username === newUsername);  
+    if (!existingUser) {  
+      user.push(data);  
+      io.emit('addUser', data);  
+    } else {  
+      console.log('用户已存在: ', newUsername);  
+    }  
+    io.emit('userList', user); 
+    socket.username = data.username 
+    console.log(newUsername + '上线')
+    console.log(user)
+  })
+ 
+  socket.on('disconnect',() => {
+    let idx = user.findIndex(item => item.username == socket.username);
+    if(idx!=-1){
+      user.splice(idx,1);
+      io.emit('delUser',{
+        username:socket.username
+      })
+    }
+    io.emit('userList',user);
+    console.log(socket.username + '断开链接')
+    console.log(user)
+  })
+  
+  socket.on('sendMessage',data=>{
+    let {username,avatar,type,action,content } = data;
+
+    let date = new Date();
+    db.query('insert into messages (username,avatar,type,action,content,date) values (?,?,?,?,?,?)',[username,avatar,type,action,content,date],(err,res)=>{
+      if(err){
+        console.log('出现错误',err)
+      }else{
+        io.emit('submitNews',{...data,date})
+      }
+    })
+  })
+
+  socket.on('getNewsList',()=>{
+    db.query('select * from messages',(err,data)=>{
+      if(err){
+        console.log('出现错误',err)
+      }else{
+        socket.emit('newsList',data)
+      }
+    })
+  })
+})
